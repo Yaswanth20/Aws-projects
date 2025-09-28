@@ -1,0 +1,132 @@
+#Self Host n8n on EC2 with secure SSH Access on HTTPS port
+Self host a powerful automation tool (n8n) on EC2 with a secure access
+
+##1. Setup EC2 Instance
+Launch the EC2 with an Amazon Linux AMI
+Allocate an Elastic IP Address in the EC2 Dashboard and associate it to the EC2
+
+##2. Create a DNS through Route 53
+Create a hosted zone and add a new record with the allocated elastic IP
+
+##3. Install n8n on docker on the EC2
+Connect to your EC2 via SSH
+Install Docker and Docker Compose
+`# Update system
+sudo yum update -y
+
+# Install Docker
+sudo amazon-linux-extras enable docker
+sudo yum install -y docker
+
+# Start Docker service
+sudo systemctl enable docker
+sudo systemctl start docker`
+
+use `docker -v` to check version and if it installed properly
+
+Install Compose
+`
+sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
+-o /usr/local/bin/docker-compose
+
+sudo chmod +x /usr/local/bin/docker-compose
+`
+
+Verify the installation with
+`docker-compose --version`
+
+###Setup the n8n directory and give it permissions
+`
+sudo -i
+# Create n8n-server folder and cd into it
+mkdir -p ~/n8n-server && cd ~/n8n-server
+
+# Create the n8n_data folder inside it
+mkdir -p n8n_data
+
+sudo chown -R 1000:1000 ./n8n_data
+`
+Create a docker-compose file
+
+`vi docker-compose.yml`
+
+and insert the following, replacing domain name with your domain name
+
+`version: '3.7'
+
+services:
+  n8n:
+    image: n8nio/n8n
+    container_name: n8n
+    restart: always
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=yourdomain.com
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - N8N_WEBHOOK_URL=https://yourdomain.com/
+      - N8N_SECURE_COOKIE=true
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_EDITOR_BASE_URL=https://yourdomain.com/
+    volumes:
+      - ./n8n_data:/home/node/.n8n`
+
+Start the n8n
+
+`
+docker-compose up -d
+
+# Stop and remove containers (but not volumes)
+docker-compose down
+
+# Recreate containers with updated config
+docker-compose up -d
+`
+##4. Secure your application with nginx and certify the domain
+
+Install nginx
+`sudo yum update -y
+sudo yum install -y nginx
+sudo systemctl enable nginx
+sudo systemctl start nginx`
+
+Create nginx file config
+
+`
+sudo vi /etc/nginx/conf.d/n8n.conf
+`
+`
+server {
+    listen 80;
+    server_name yourdomain.com;
+
+    location / {
+      proxy_pass http://localhost:5678;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+  
+      # WebSocket-specific headers for the connection upgrade
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+  }
+}
+`
+Test: 
+
+`sudo nginx -t
+sudo systemctl reload nginx`
+
+Stop Nginx, install certbot, and run certbot
+
+`sudo systemctl stop nginx
+sudo dnf install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d yourdomain.com`
+
+and start nginx again
+
+
+
